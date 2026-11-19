@@ -3,12 +3,14 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 
+const path = require('path');   
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 // Serve static files from the 'public' folder
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 let players = []; // Stores connected players (Max 2 players, rest spectators)
 let gameState = {
@@ -129,6 +131,8 @@ function checkWinner() {
 }
 
 // Lab 4 requirement: dynamic port assignment and 0.0.0.0 binding for Render[cite: 7, 10]
+console.log('Serving static files from:', path.join(__dirname, 'public'));
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
