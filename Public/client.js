@@ -1,4 +1,5 @@
 // Author: Anush Aryal
+// Author: Anush Aryal
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 const ws = new WebSocket(`${protocol}//${window.location.host}`);
 
@@ -29,9 +30,11 @@ ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
     if (data.type === 'assignedRole') {
-        myRole = data.role;
-        loginStatus.textContent = `Logged in as ${data.username} (${myRole})`;
-        document.getElementById("login-container").style.display = "none";
+    myRole = data.role;
+    loginStatus.textContent = myRole === "Spectator"
+        ? `Logged in as ${data.username} (Spectator, watching only)`
+        : `Logged in as ${data.username} (Player ${myRole})`;
+    document.getElementById("login-container").style.display = "none";
     }
 
     if (data.type === 'gameState') {
@@ -58,10 +61,8 @@ canvas.addEventListener("click", (event) => {
     }
 
     const rect = canvas.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    const col = Math.floor(mouseX / CELL_SIZE);
-    const row = Math.floor(mouseY / CELL_SIZE);
+    const col = Math.floor((event.clientX - rect.left) / rect.width * 3);
+    const row = Math.floor((event.clientY - rect.top) / rect.height * 3);
     const index = row * 3 + col;
 
     if (currentBoard[index] !== "") {
