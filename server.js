@@ -21,7 +21,7 @@ wss.on('connection', (ws) => {
     console.log('Client connected');
 
     // Send initial game state to newly connected client
-    ws.send(JSON.stringify({ type: "state", gameState }));
+    ws.send(JSON.stringify({ type: "gameState", board: gameState.board, currentPlayer: gameState.currentPlayer, winner: gameState.winner }));
 
     ws.on('message', (message) => {
         let data;
@@ -31,85 +31,80 @@ wss.on('connection', (ws) => {
             return;
         }
 
-        // Handle login / joining the game
-        if (data.type === "login") {
-            let role = "spectator";
+        // Handle user joining the game
+        if (data.type === "joinGame") {
+            let role = "Spectator";
             if (players.length < 2) {
                 role = players.length === 0 ? "X" : "O";
-                players.push({ ws, name: data.name, role });
+                players.push({ ws, name: data.username, role });
             } else {
-                players.push({ ws, name: data.name, role: "spectator" });
+                players.push({ ws, name: data.username, role: "Spectator" });
             }
 
-            // Send role assignment back to this client
+            // Send assigned role back to client
             ws.send(JSON.stringify({
-                type: "role",
+                type: "assignedRole",
                 role: role,
-                name: data.name
+                username: data.username
             }));
+            
+            broadcastState();
         }
 
-        // Handle placing a piece ("place")
-        if (data.type === "place") {
+        // Handle player moves
+        if (data.type === "makeMove") {
             const player = players.find(p => p.ws === ws);
-            
-            // Check if player has a valid role matching the current turn
             if (!player || player.role !== gameState.currentPlayer || gameState.winner || gameState.board[data.index] !== "") {
-                ws.send(JSON.stringify({ type: "error", message: "Invalid move or not your turn!" }));
                 return;
             }
 
-            // Update board state
             gameState.board[data.index] = gameState.currentPlayer;
-            
-            // Check for winner
             gameState.winner = checkWinner();
 
-            if (!gameState.winner && !gameState.board.includes("")) {
-                gameState.winner = "Draw";
-            } else if (!gameState.winner) {
+            if (!gameState.winner && gameState.board.includes("")) {
                 gameState.currentPlayer = gameState.currentPlayer === "X" ? "O" : "X";
             }
 
-            // Broadcast updated state to all connected clients
-            broadcast({ type: "state", gameState });
+            broadcastState();
         }
 
         // Handle game reset
-        if (data.type === "reset") {
+        if (data.type === "resetGame") {
             gameState = {
                 board: Array(9).fill(""),
                 currentPlayer: "X",
                 winner: null
             };
-            broadcast({ type: "state", gameState });
+            broadcastState();
         }
     });
 
     ws.on('close', () => {
-        console.log('Client disconnected');
+        console.log('Client connected');
         const index = players.findIndex(p => p.ws === ws);
         if (index !== -1) {
             players.splice(index, 1);
-            
-            // Reset board on player disconnect and reassign roles if needed
             gameState = {
                 board: Array(9).fill(""),
                 currentPlayer: "X",
                 winner: null
             };
             players.forEach((p, idx) => {
-                p.role = idx === 0 ? "X" : (idx === 1 ? "O" : "spectator");
-                p.ws.send(JSON.stringify({ type: "role", role: p.role, name: p.name }));
+                p.role = idx === 0 ? "X" : (idx === 1 ? "O" : "Spectator");
+                p.ws.send(JSON.stringify({ type: "assignedRole", role: p.role, username: p.name }));
             });
-            broadcast({ type: "state", gameState });
+            broadcastState();
         }
     });
 });
 
-// Helper function to broadcast messages to all connected clients
-function broadcast(data) {
-    const message = JSON.stringify(data);
+function broadcastState() {
+    const message = JSON.stringify({
+        type: "gameState",
+        board: gameState.board,
+        currentPlayer: gameState.currentPlayer,
+        winner: gameState.winner
+    });
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -129,6 +124,7 @@ function checkWinner() {
             return gameState.board[a];
         }
     }
+    if (!gameState.board.includes("")) return "Draw";
     return null;
 }
 
