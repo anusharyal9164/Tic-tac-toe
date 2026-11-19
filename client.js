@@ -1,7 +1,6 @@
 // Author: Anush Aryal
-// Secure protocol check for local development and Render deployment
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-const socket = io(); // Socket.io handles protocol translation automatically behind the scenes
+const socket = io();
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
