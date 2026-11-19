@@ -1,119 +1,197 @@
 // Author: Anush Aryal
-const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-const socket = io();
+const express = require("express"); // Import the Express framework
+const http = require("http"); // Import HTTP module for Express and WebSockets
+const WebSocket = require("ws"); // WebSocket library for real-time communication
 
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-const statusText = document.getElementById("status");
-const loginStatus = document.getElementById("loginStatus");
-const joinBtn = document.getElementById("joinBtn");
-const resetBtn = document.getElementById("resetBtn");
-const usernameInput = document.getElementById("username");
+const app = express(); // Create Express application
+const server = http.createServer(app); // Create HTTP server
+const wss = new WebSocket.Server({ server }); // Create WebSocket server
 
-const CELL_SIZE = 200;
-let myRole = null;
-let currentBoard = Array(9).fill("");
-let currentTurn = "X";
-let gameWinner = null;
+app.use(express.static("public")); // Serve everything inside the public folder
 
-joinBtn.addEventListener("click", () => {
-    const username = usernameInput.value.trim();
-    if (!username) {
-        alert("Please enter a username.");
-        return;
-    }
-    socket.emit('joinGame', { username });
-});
+const GAME_PASSWORD = "secret123"; // Password required to join the game
 
-socket.on('assignedRole', (data) => {
-    myRole = data.role;
-    loginStatus.textContent = `Logged in as ${data.username} (${myRole})`;
-    document.getElementById("login-container").style.display = "none";
-});
+// GAME STATE
+let gameState = {
+    board: Array(9).fill(""),
+    currentPlayer: "X",
+    winner: null
+};
 
-socket.on('gameState', (state) => {
-    currentBoard = state.board;
-    currentTurn = state.currentPlayer;
-    gameWinner = state.winner;
+// Track the two active players
+let players = {
+    X: null,
+    O: null
+};
 
-    if (gameWinner) {
-        if (gameWinner === "Draw") {
-            statusText.textContent = "It's a Draw!";
-        } else {
-            statusText.textContent = `Winner: ${gameWinner}`;
+// SEND GAME STATE TO EVERYONE
+function broadcastState() {
+    const payload = JSON.stringify({
+        type: "state",
+        gameState
+    });
+
+    // Loop through clients using a lambda expression with each client
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(payload);
         }
-    } else {
-        statusText.textContent = `Current Turn: Player ${currentTurn}`;
-    }
-    drawBoard();
-});
-
-canvas.addEventListener("click", (event) => {
-    if (!myRole || myRole === "Spectator" || gameWinner || currentTurn !== myRole) {
-        return;
-    }
-
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    const col = Math.floor(mouseX / CELL_SIZE);
-    const row = Math.floor(mouseY / CELL_SIZE);
-    const index = row * 3 + col;
-
-    if (currentBoard[index] !== "") {
-        return;
-    }
-
-    socket.emit('makeMove', index);
-});
-
-resetBtn.addEventListener("click", () => {
-    socket.emit('resetGame');
-});
-
-function drawBoard() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGrid();
-    drawPieces();
+    });
 }
 
-function drawGrid() {
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(200, 0); ctx.lineTo(200, 600);
-    ctx.moveTo(400, 0); ctx.lineTo(400, 600);
-    ctx.moveTo(0, 200); ctx.lineTo(600, 200);
-    ctx.moveTo(0, 400); ctx.lineTo(600, 400);
-    ctx.stroke();
-}
+// CHECK FOR WINNER
+function checkWinner(board) {
+    const lines = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6]
+    ];
 
-function drawPieces() {
-    for (let i = 0; i < currentBoard.length; i++) {
-        const row = Math.floor(i / 3);
-        const col = i % 3;
-        const x = col * CELL_SIZE;
-        const y = row * CELL_SIZE;
-        if (currentBoard[i] === "X") {
-            drawX(x, y);
-        } else if (currentBoard[i] === "O") {
-            drawO(x, y);
+    for (const [a, b, c] of lines) {
+        if (
+            board[a] &&
+            board[a] === board[b] &&
+            board[a] === board[c]
+        ) {
+            return board[a];
         }
     }
+
+    return null;
 }
 
-function drawX(x, y) {
-    ctx.beginPath();
-    ctx.moveTo(x + 30, y + 30);
-    ctx.lineTo(x + 170, y + 170);
-    ctx.moveTo(x + 170, y + 30);
-    ctx.lineTo(x + 30, y + 170);
-    ctx.stroke();
-}
+// Connection Event Handler
+wss.on("connection", ws => {
 
-function drawO(x, y) {
-    ctx.beginPath();
-    ctx.arc(x + 100, y + 100, 70, 0, Math.PI * 2);
-    ctx.stroke();
-}
+    // Declare and init variables to store information about this connection
+    ws.playerName = "";
+    ws.role = "spectator";
+    ws.authenticated = false;
 
-drawBoard();
+    // Send current game state immediately
+    ws.send(JSON.stringify({ type: "state", gameState }));
+
+    // RECEIVE MESSAGE
+    ws.on("message", message => {
+        const data = JSON.parse(message);
+
+        // If message type was login, verify password and process a login
+        if (data.type === "login") {
+            if (data.password !== GAME_PASSWORD) {
+                ws.send(JSON.stringify({
+                    type: "error",
+                    message: "Invalid password"
+                }));
+                return;
+            }
+
+            // If password verified, save user information
+            ws.playerName = data.name;
+            ws.authenticated = true;
+
+            if (!players.X) {
+                players.X = ws;
+                ws.role = "X";
+            } else if (!players.O) {
+                players.O = ws;
+                ws.role = "O";
+            } else {
+                ws.role = "spectator";
+            }
+
+            // Inform client of assigned role
+            ws.send(
+                JSON.stringify({
+                    type: "role",
+                    role: ws.role,
+                    name: ws.playerName
+                })
+            );
+
+            return;
+        } // End of data.type === "login"
+
+        // Ignore everything until authenticated
+        if (!ws.authenticated) {
+            return;
+        }
+
+        // PLACE PIECE
+        if (data.type === "place") {
+            const index = data.index;
+
+            // Must be X or O
+            if (ws.role !== "X" && ws.role !== "O") {
+                return;
+            }
+
+            // Must be player's turn
+            if (ws.role !== gameState.currentPlayer) {
+                return;
+            }
+
+            // Game already finished
+            if (gameState.winner) {
+                return;
+            }
+
+            // Cell already occupied
+            if (gameState.board[index] !== "") {
+                return;
+            }
+
+            // Place move
+            gameState.board[index] = gameState.currentPlayer;
+
+            const winner = checkWinner(gameState.board);
+
+            if (winner) {
+                gameState.winner = winner;
+            } else {
+                gameState.currentPlayer =
+                    gameState.currentPlayer === "X" ? "O" : "X";
+            }
+
+            broadcastState();
+
+        } // End of data.type === "place"
+
+        // RESET
+        if (data.type === "reset") {
+            gameState = {
+                board: Array(9).fill(""),
+                currentPlayer: "X",
+                winner: null
+            };
+
+            broadcastState();
+        }
+
+    }); // End of ws.on("message")
+
+    // CLIENT DISCONNECTS
+    ws.on("close", () => {
+        if (players.X === ws) {
+            players.X = null;
+        }
+
+        if (players.O === ws) {
+            players.O = null;
+        }
+    });
+
+}); // End of wss.on("connection")
+
+//START SERVER
+
+// server.listen(3000, () => {
+//     console.log("Server running on port 3000");
+// });
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, "0.0.0.0", () => {console.log(`Server running on port ${PORT}`);} );
